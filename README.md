@@ -1,1 +1,1 @@
-The html is published at https://stevenmichiels.github.io/CourseraPracticalMachineLearning/
+The compiled .html is published at https://stevenmichiels.github.io/CourseraPracticalMachineLearning/
