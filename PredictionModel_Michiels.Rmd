@@ -1,0 +1,170 @@
+---
+title: 'Peer-graded Assignment: Practical Machine Learning'
+author: "Steven Michiels"
+date: "4/22/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+#  Executive summary
+
+
+
+
+The goal of this project is to __predict__ the __correctness of training exercise__, based on accelerometer data from the belt, forearm, arm, and dumbell of 6 participants. These were asked to perform barbell lifts correctly and incorrectly in 5 different ways. This training data was used to build a __random forest model__ to __classify__ the training exercise manner into __five different categories__: sitting-down, standing-up, standing, walking, and sitting. Five-fold cross-validation provided a __95% confidence interval for the out-of-sample accuracy of [99.3%, 99.5%]__. This is in line with the .4% out-of-bag error estimated from a bootstrapped random forest model. The random forest built using 5-fold cross validation was used to __predict the training exercise manner for 20 new observations__. 
+
+
+#  Data cleaning and exploration
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+source("loadLibs.R")
+loadLibs()
+load("~/Documents/MLDL/ISL/.RData")
+```
+
+
+
+We load the training and testing data from the provided URL's. The training data consists of 19622 observations of 159 predictors and a 5-level factor outcome (A, B, C, D or E). A hold-out test set is already provided, consisting of 20 observations. Using the is.na command on all the columns, we see that many predictors barely contain any observation. We verify that these columns do not contain any useful information using the near-zero variance function and __filter out__ these columns. We manually observe that the first seven columns neither contain any useful information, so we filter these out as well. This leaves us with __52 predictors__. 
+
+```{r include=FALSE}
+training <- read.csv(url("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+testing  <- read.csv(url("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+training$classe <- as.factor(training$classe) 
+str(training)
+dim(testing)
+```
+
+
+```{r include=FALSE}
+NAcols_method1=which(apply(training,2,function(x) {sum(is.na(x)| x =="")>0.9*dim(training)[2]})==TRUE)
+
+NAcols_method2=which(colSums(is.na(training) | training =="")>0.9*dim(training[1]))
+table(sapply(training, class))
+which(sapply(training,is.factor))
+irrelevant_cols<-1:7
+
+NearZeroVarianceCols<-nearZeroVar(training,saveMetrics=TRUE)
+NearZeroVarianceCols<-NearZeroVarianceCols$nzv
+
+training_clean<-(training[,-c(irrelevant_cols,NearZeroVarianceCols,NAcols_method2)])
+str(training_clean)
+dim(training_clean)
+
+```
+
+To get a feeling of the variance in the predictors, we perform a __principal component analysis__. The cumulative variance proportion is not dominated by few predictors, as instead many predictors make smaller contributions. Therefore, instead of explicit feature selection, we will make use of the __inherent feature importance selection__ of the __random forest algorithm__ during model building.
+```{r include=F}
+pcr.fit=prcomp(training_clean[,-53], scale=TRUE)
+pcr.var=pcr.fit$sdev ^2
+pve=pcr.var/sum(pcr.var)
+```
+
+
+```{r echo=F}
+par(mfrow=c(1,2))
+plot(pve , xlab=" Principal Component ", ylab="Proportion of Variance Explained ", ylim=c(0,1),type="b")
+plot(cumsum(pve), xlab="Principal Component ", ylab=" Cumulative Proportion of Variance Explained ", ylim=c(0,1), type="b")
+
+```
+
+
+```{r include=FALSE}
+num_cor<-cor(training_clean[, sapply(training_clean, is.numeric)],
+    use = "complete.obs", method = "pearson")
+summary(training_clean[, sapply(training_clean, is.integer)])
+```
+
+
+#  Model building and evaluation
+We create a random forest model using 5-fold cross validation, which will allow us to estimate the out-of-sample error. The training takes around 40 minutes on a MacBook Pro 2016 with CPU. 
+
+```{r include=FALSE,eval=FALSE}
+start_time <- Sys.time()
+controlRF <- trainControl(method="cv", number=5, verboseIter=F, savePredictions="final", classProbs=T)
+modFitRF <- train(classe ~ ., importance=T, data=training_clean, method="rf",
+                          trControl=controlRF)
+end_time <- Sys.time()
+modFitRF$finalModel
+end_time-start_time
+
+```
+
+The random forest algorithm by default tries three different numbers of variables randomly sampled at each split, the mtry. We use the CARET trainControl function with option savePredictions to 'final'. As such, the predicted outcomes are saved for the cross-validation results of the model for the finally selected value for mtry, in this case 27. This allows us to create a __confusionMatrix__ for the __cross-validated results__. 
+
+
+```{r echo=F}
+predictions<-modFitRF$pred
+predictions_ordered<-modFitRF$pred[order(modFitRF$pred$rowIndex),2]
+a<-confusionMatrix(modFitRF$pred[order(modFitRF$pred$rowIndex),2], training$classe)
+a$table
+a$overall
+```
+
+We obtain an __accuracy within the 95% CI [99.3%,99.5%]__. We can __plot__ the __most important predictors per class__ and the __overall predictor importance__. 
+
+```{r align="center", echo=F}
+#plot(modFitRF$finalModel)
+plot(varImp(modFitRF), top = 10)
+```
+
+```{r align="center", echo=F}
+varImpPlot(modFitRF$finalModel, type=2)
+
+```
+
+
+
+As we've obtained an __excellent cross-validated accuracy__, this model will be __used__ for the __prediction of the test cases__.
+
+It should be noted that strictly speaken the 5-fold cross-validation was not necessary to obtain an estimate for the out-of-sample error, since the default method of random forest uses bootstrapping. As such, only 63% of the observations are effectively used for the model training. The remaining out-of-bag (oob) observation can be used as well to estimate the out-of-sample error. A random forest without cross-validation was built as well and the estimated oob-error was .42%, which is in line with the cross-validated out-of-sample error.
+
+The __final predictions__ using the __random forest built using 5-fold cross-validation__ are:
+```{r}
+test_predictions = predict(modFitRF, newdata=testing)
+test_predictions
+```
+
+
+```{r eval=FALSE, include=FALSE}
+start_time <- Sys.time()
+controlRF2 <- trainControl(verboseIter=F, savePredictions="final", classProbs=T)
+modFitRF2 <- train(classe ~ ., importance=T, data=training_clean, method="rf",
+                          trControl=controlRF2)
+end_time <- Sys.time()
+end_time-start_time
+modFitRF2$finalModel
+```
+
+
+```{r include=FALSE}
+plot(modFitRF2$finalModel)
+rownames(varImp(modFitRF2)$importance)[1:10]
+varImpPlot(modFitRF2$finalModel, type=2)
+plot(varImp(modFitRF2), top = 10)
+```
+
+
+```{r include=FALSE}
+test_predictions = predict(modFitRF2, newdata=testing)
+test_predictions
+
+```
+
+```{r include=FALSE}
+a<-names(modFitRF2)
+a
+b<-names(modFitRF2$finalModel)
+b
+modFitRF2$finalModel$inbag
+```
+
+
+
+
+
